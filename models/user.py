@@ -1,7 +1,7 @@
 from pydantic import BaseModel, Field, AfterValidator, ConfigDict, validate_call
 from typing import Annotated
-from datetime import datetime
 from uuid import UUID
+from enum import Enum
 
 @validate_call
 def validate_username(value: str) -> str:
@@ -52,3 +52,7 @@ class UserInDB(UserBase):
     
 class UserEncode(UserBase):
     id: UUID
+    
+class UserRole(str, Enum):
+    USER = "user"
+    ADMIN = "admin"
