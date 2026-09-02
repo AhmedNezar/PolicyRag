@@ -1,6 +1,6 @@
 services:
   postgres:
-      image: postgres:latest
+      image: pgvector/pgvector:0.8.3-pg18-trixie
       container_name: postgres
       ports:
         - "5432:5432"
