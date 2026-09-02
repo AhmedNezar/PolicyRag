@@ -1,4 +1,5 @@
 from pydantic_settings import BaseSettings
+from pathlib import Path
 
 class Settings(BaseSettings):
     class Config:
@@ -15,6 +16,13 @@ class Settings(BaseSettings):
     REDIS_PASSWORD: str
     STREAM_UPDATE_SEC: int = 4
     CUTOFF_SEC: int = 30
+    READ_FILE_CHUNK: int = 52428800
+    EMBEDDING_VECTOR_SIZE: str = 768
+    GEMINI_API_KEY: str
+    EMBEDDING_MODEL: str
+    EMBEDDING_PROVIDER: str
+    
+    BASE_DIR: Path = Path(__file__).parent.parent
     
 def get_settings():
     return Settings()
