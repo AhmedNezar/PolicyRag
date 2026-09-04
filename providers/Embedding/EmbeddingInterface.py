@@ -7,5 +7,5 @@ class EmbeddingInterface(ABC):
         pass
     
     @abstractmethod
-    async def embed_retrieve(self, queries: list[str]) -> list[list[float]]:
+    async def embed_retrieve(self, query: str) -> list[float]:
         pass

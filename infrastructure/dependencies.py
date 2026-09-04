@@ -3,13 +3,16 @@ from config import get_settings
 from typing import Annotated
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import Depends
-from providers.LLMFactory import LLMFactory
-from providers.LLMInterface import LLMInterface
+from providers.llm.LLMFactory import LLMFactory
+from providers.llm.LLMInterface import LLMInterface
+from providers.embedding import EmbeddingInterface, EmbeddingFactory
 from config import get_settings, Settings
 from services import ChatService, PasswordService, TokenService, AuthService, ConversationService, MemoryService, MessageService
-from repositories import ConversationRepository, TokenRepository, UserRepository, MessageRepository
+from services.rag import IngestionService, ChunkingService, RetrievalService
+from repositories import ConversationRepository, TokenRepository, UserRepository, MessageRepository, DocumentRepository, ChunkRepository
 
 _model: LLMInterface | None = None
+_embedding_model: EmbeddingInterface | None = None
 
 db = Database(settings=get_settings())
 SettingsDep = Annotated[Settings, Depends(get_settings)]
@@ -33,6 +36,14 @@ def get_model():
     return _model
 
 ModelDep = Annotated[LLMInterface, Depends(get_model)]
+
+def get_embedding_model(settings: SettingsDep):
+    global _embedding_model
+    if not _embedding_model:
+        _embedding_model = EmbeddingFactory(settings).create()
+    return _embedding_model
+
+EmbeddingModelDep = Annotated[EmbeddingInterface, Depends(get_embedding_model)]
 
 def get_password_service() -> PasswordService:
     return PasswordService()
@@ -103,3 +114,29 @@ def get_chat_service(model: ModelDep, settings: SettingsDep, message_service: Me
     )
 
 ChatServiceDep = Annotated[ChatService, Depends(get_chat_service)]
+
+def get_doc_repo(session: DBSessionDep) -> DocumentRepository:
+    return DocumentRepository(session)
+
+DocRepoDep = Annotated[DocumentRepository, Depends(get_doc_repo)]
+
+def get_chunk_repo(session: DBSessionDep) -> ChunkRepository:
+    return ChunkRepository(session)
+
+ChunkRepoDep = Annotated[ChunkRepository, Depends(get_chunk_repo)]
+    
+def get_chunk_service(settings: SettingsDep) -> ChunkingService:
+    return ChunkingService(settings)
+
+ChunkServiceDep = Annotated[ChunkingService, Depends(get_chunk_service)]
+
+def get_ingestion_service(settings: SettingsDep, embedding_model: EmbeddingModelDep,
+                          doc_repo: DocRepoDep, chunk_repo: ChunkRepoDep, chunk_service: ChunkServiceDep):
+    return IngestionService(settings, embedding_model, doc_repo, chunk_repo, chunk_service)
+
+IngestionServiceDep = Annotated[IngestionService, Depends(get_ingestion_service)]
+
+def get_retrieval_service(chunk_repo: ChunkRepoDep, embedding_model: EmbeddingModelDep):
+    return RetrievalService(chunk_repo, embedding_model)
+
+RetrievalServiceDep = Annotated[RetrievalService, Depends(get_retrieval_service)]

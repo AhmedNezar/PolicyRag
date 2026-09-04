@@ -22,13 +22,13 @@ class Gemini(EmbeddingInterface):
         return [embedding.values for embedding in result.embeddings]
     
 
-    async def embed_retrieve(self, queries: list[str]) -> list[list[float]]:
-        queries_texts = [f"task: question answering | query: {q}" for q in queries]
+    async def embed_retrieve(self, query: str) -> list[float]:
+        query_text = f"task: question answering | query: {query}"
         
         result = await self.client.aio.models.embed_content(
             model=self.model,
-            contents=queries_texts,
+            contents=[query_text],
             config=EmbedContentConfig(output_dimensionality=self.settings.EMBEDDING_VECTOR_SIZE)
         )
     
-        return [embedding.values for embedding in result.embeddings]
+        return result.embeddings[0].values

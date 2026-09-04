@@ -1,4 +1,4 @@
-from providers.LLMInterface import LLMInterface
+from providers.llm.LLMInterface import LLMInterface
 from typing import AsyncGenerator
 from uuid import UUID
 import json

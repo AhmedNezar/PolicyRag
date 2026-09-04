@@ -10,3 +10,8 @@ AlreadyRegisteredException = HTTPException(
     status_code=status.HTTP_400_BAD_REQUEST,
     detail="Username already registered",
 )
+
+FileTypeNotSupported = HTTPException(
+    status_code=status.HTTP_400_BAD_REQUEST,
+    detail="File type not supported"
+)

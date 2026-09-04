@@ -4,7 +4,7 @@ import asyncio
 from uuid import UUID
 from exceptions import UnauthorizedException
 from config import Settings
-from providers.LLMInterface import LLMInterface
+from providers.llm.LLMInterface import LLMInterface
 from models import MessageStatus
 from datetime import datetime, UTC, timedelta
 

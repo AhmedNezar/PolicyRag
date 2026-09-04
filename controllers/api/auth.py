@@ -38,6 +38,7 @@ async def get_current_user(credentials: AuthHeaderDep, auth_service: AuthService
     if not (token := credentials.credentials):
         raise UnauthorizedException
         
+    print("Getting current user")
     return await auth_service.get_current_user(token)
 
 AuthenticateUserDep = Annotated[User, Depends(get_current_user)]

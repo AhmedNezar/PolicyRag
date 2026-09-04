@@ -17,10 +17,12 @@ class Settings(BaseSettings):
     STREAM_UPDATE_SEC: int = 4
     CUTOFF_SEC: int = 30
     READ_FILE_CHUNK: int = 52428800
-    EMBEDDING_VECTOR_SIZE: str = 768
+    EMBEDDING_VECTOR_SIZE: int = 768
     GEMINI_API_KEY: str
     EMBEDDING_MODEL: str
     EMBEDDING_PROVIDER: str
+    CHUNK_SIZE: int
+    CHUNK_OVERLAP: int
     
     BASE_DIR: Path = Path(__file__).parent.parent
     
