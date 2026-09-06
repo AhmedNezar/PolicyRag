@@ -5,17 +5,12 @@ from infrastructure.prompts import REWRITE_PROMPT
 from models.chat import QueryRewrite
 
 class RetrievalService:
-    def __init__(self, chunk_repo: ChunkRepository, embedding_model: EmbeddingInterface, model: LLMInterface):
+    def __init__(self, chunk_repo: ChunkRepository, model: LLMInterface):
         self.chunk_repo = chunk_repo
-        self.embedding_model = embedding_model
         self.model = model
         
         
-    async def retrieve(self, query: str, history: list[dict] | None = None, rewrite: bool = False) -> list[str]:
-        if rewrite and history:
-            query = await self.rewrite(history, query)
-            
-        embeddings = await self.embedding_model.embed_retrieve(query)
+    async def retrieve(self, embeddings: list[float]) -> list[str]:
         chunks = await self.chunk_repo.search(embeddings)
         chunk_text = [c.content for c in chunks]
         return chunk_text

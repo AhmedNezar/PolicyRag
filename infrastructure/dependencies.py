@@ -6,6 +6,7 @@ from fastapi import Depends
 from providers.llm.LLMFactory import LLMFactory
 from providers.llm.LLMInterface import LLMInterface
 from providers.embedding import EmbeddingInterface, EmbeddingFactory
+from providers.cache import RedisCache
 from config import get_settings, Settings
 from services import ChatService, PasswordService, TokenService, AuthService, ConversationService, MemoryService, MessageService, GuardrailService
 from services.rag import IngestionService, ChunkingService, RetrievalService
@@ -123,8 +124,8 @@ def get_ingestion_service(settings: SettingsDep, embedding_model: EmbeddingModel
 
 IngestionServiceDep = Annotated[IngestionService, Depends(get_ingestion_service)]
 
-def get_retrieval_service(chunk_repo: ChunkRepoDep, embedding_model: EmbeddingModelDep, model: ModelDep) -> RetrievalService:
-    return RetrievalService(chunk_repo, embedding_model, model)
+def get_retrieval_service(chunk_repo: ChunkRepoDep, model: ModelDep) -> RetrievalService:
+    return RetrievalService(chunk_repo, model)
 
 RetrievalServiceDep = Annotated[RetrievalService, Depends(get_retrieval_service)]
 
@@ -133,9 +134,15 @@ def get_guardrail_service(model: ModelDep) -> GuardrailService:
 
 GuardrailServiceDep = Annotated[GuardrailService, Depends(get_guardrail_service)]
 
+def get_redis_cache(settings: SettingsDep, embedding_model: EmbeddingModelDep) -> RedisCache:
+    return RedisCache(settings, embedding_model)
+
+RedisCacheDep = Annotated[RedisCache, Depends(get_redis_cache)]
+
 def get_chat_service(model: ModelDep, settings: SettingsDep, message_service: MessageServiceDep,
                      conversation_service: ConversationServiceDep,
-                     memory_service: MemoryServiceDep, guardrail: GuardrailServiceDep, retrieval_service: RetrievalServiceDep) -> ChatService:
+                     memory_service: MemoryServiceDep, guardrail: GuardrailServiceDep, 
+                     retrieval_service: RetrievalServiceDep, embedding_model: EmbeddingModelDep, redis_cache: RedisCacheDep) -> ChatService:
     return ChatService(
         model,
         settings,
@@ -143,7 +150,9 @@ def get_chat_service(model: ModelDep, settings: SettingsDep, message_service: Me
         message_service,
         conversation_service,
         guardrail,
-        retrieval_service
+        retrieval_service,
+        embedding_model,
+        redis_cache
     )
 
 ChatServiceDep = Annotated[ChatService, Depends(get_chat_service)]

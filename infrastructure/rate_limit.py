@@ -26,5 +26,6 @@ def get_user_id(request: Request) -> str:
 limiter = Limiter(
     default_limits=["200 per day", "60 per hour", "2/5seconds"],
     key_func=get_user_id,
-    storage_uri=f"redis://:{settings.REDIS_PASSWORD}@localhost:6379/0"
+    storage_uri=f"redis://:{settings.REDIS_PASSWORD}@localhost:6379/0",
+    key_prefix="ratelimit"
 )

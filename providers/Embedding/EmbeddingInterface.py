@@ -9,3 +9,7 @@ class EmbeddingInterface(ABC):
     @abstractmethod
     async def embed_retrieve(self, query: str) -> list[float]:
         pass
+    
+    @abstractmethod
+    def embed_sync(self, query: str) -> list[float]:
+        pass

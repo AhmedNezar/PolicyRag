@@ -32,3 +32,14 @@ class Gemini(EmbeddingInterface):
         )
     
         return result.embeddings[0].values
+    
+    def embed_sync(self, query: str) -> list[float]:
+        query_text = f"task: question answering | query: {query}"
+                
+        result = self.client.models.embed_content(
+            model=self.model,
+            contents=[query_text],
+            config=EmbedContentConfig(output_dimensionality=self.settings.EMBEDDING_VECTOR_SIZE)
+        )
+    
+        return result.embeddings[0].values
