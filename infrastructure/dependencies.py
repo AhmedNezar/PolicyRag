@@ -7,7 +7,7 @@ from providers.llm.LLMFactory import LLMFactory
 from providers.llm.LLMInterface import LLMInterface
 from providers.embedding import EmbeddingInterface, EmbeddingFactory
 from config import get_settings, Settings
-from services import ChatService, PasswordService, TokenService, AuthService, ConversationService, MemoryService, MessageService
+from services import ChatService, PasswordService, TokenService, AuthService, ConversationService, MemoryService, MessageService, GuardrailService
 from services.rag import IngestionService, ChunkingService, RetrievalService
 from repositories import ConversationRepository, TokenRepository, UserRepository, MessageRepository, DocumentRepository, ChunkRepository
 
@@ -102,19 +102,6 @@ def get_memory_service(conversation_service: ConversationServiceDep) -> MemorySe
 
 MemoryServiceDep = Annotated[MemoryService, Depends(get_memory_service)]
 
-def get_chat_service(model: ModelDep, settings: SettingsDep, message_service: MessageServiceDep,
-                     conversation_service: ConversationServiceDep,
-                     memory_service: MemoryServiceDep) -> ChatService:
-    return ChatService(
-        model,
-        settings,
-        memory_service,
-        message_service,
-        conversation_service
-    )
-
-ChatServiceDep = Annotated[ChatService, Depends(get_chat_service)]
-
 def get_doc_repo(session: DBSessionDep) -> DocumentRepository:
     return DocumentRepository(session)
 
@@ -131,12 +118,32 @@ def get_chunk_service(settings: SettingsDep) -> ChunkingService:
 ChunkServiceDep = Annotated[ChunkingService, Depends(get_chunk_service)]
 
 def get_ingestion_service(settings: SettingsDep, embedding_model: EmbeddingModelDep,
-                          doc_repo: DocRepoDep, chunk_repo: ChunkRepoDep, chunk_service: ChunkServiceDep):
+                          doc_repo: DocRepoDep, chunk_repo: ChunkRepoDep, chunk_service: ChunkServiceDep) -> IngestionService:
     return IngestionService(settings, embedding_model, doc_repo, chunk_repo, chunk_service)
 
 IngestionServiceDep = Annotated[IngestionService, Depends(get_ingestion_service)]
 
-def get_retrieval_service(chunk_repo: ChunkRepoDep, embedding_model: EmbeddingModelDep):
-    return RetrievalService(chunk_repo, embedding_model)
+def get_retrieval_service(chunk_repo: ChunkRepoDep, embedding_model: EmbeddingModelDep, model: ModelDep) -> RetrievalService:
+    return RetrievalService(chunk_repo, embedding_model, model)
 
 RetrievalServiceDep = Annotated[RetrievalService, Depends(get_retrieval_service)]
+
+def get_guardrail_service(model: ModelDep) -> GuardrailService:
+    return GuardrailService(model)
+
+GuardrailServiceDep = Annotated[GuardrailService, Depends(get_guardrail_service)]
+
+def get_chat_service(model: ModelDep, settings: SettingsDep, message_service: MessageServiceDep,
+                     conversation_service: ConversationServiceDep,
+                     memory_service: MemoryServiceDep, guardrail: GuardrailServiceDep, retrieval_service: RetrievalServiceDep) -> ChatService:
+    return ChatService(
+        model,
+        settings,
+        memory_service,
+        message_service,
+        conversation_service,
+        guardrail,
+        retrieval_service
+    )
+
+ChatServiceDep = Annotated[ChatService, Depends(get_chat_service)]

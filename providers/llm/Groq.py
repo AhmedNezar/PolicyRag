@@ -6,6 +6,7 @@ import asyncio
 from models import LLMResponse, LLMStreamResponse, LLMUsage
 from .schemas.title import TitleSummarization
 import json
+from pydantic import BaseModel
 
 class Groq(LLMInterface):
     
@@ -14,26 +15,30 @@ class Groq(LLMInterface):
         self.client = AsyncGroq(api_key=settings.GROQ_KEY)
         
         
-    async def generate(self, messages) -> str:
-        completion = await self.client.chat.completions.create(
-            model=self.model,
-            messages=messages
-        )
-        
-        prompt_tokens = completion.usage.prompt_tokens
-        response_tokens = completion.usage.completion_tokens
-        
-        response = LLMResponse(
-            prompt_content=messages[1]["content"],
-            response_content=completion.choices[0].message.content,
-            usage=LLMUsage(
-                prompt_tokens=prompt_tokens,
-                response_tokens=response_tokens,
-                total_tokens=prompt_tokens+response_tokens
+    async def generate(self, system_message: str, user_messages: list[dict], output_schema: BaseModel | None, schema_name: str | None) -> str | BaseModel:
+        if output_schema:
+            response = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "system", "content": system_message}] + user_messages,
+                response_format={
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": schema_name,
+                        "schema": output_schema.model_json_schema()
+                    }
+                }
             )
-        )
-        
-        return response
+            
+            raw_result = json.loads(response.choices[0].message.content or "{}")
+            result = output_schema.model_validate(raw_result)
+            return result
+        else:
+            completion = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "system", "content": system_message}] + user_messages
+            )
+            
+            return completion.choices[0].message.content
     
     async def stream(self, messages) -> AsyncGenerator[LLMStreamResponse, None]:
         chat_stream = await self.client.chat.completions.create(

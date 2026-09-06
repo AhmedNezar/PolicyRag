@@ -24,14 +24,3 @@ async def stream(request: Request, chat_request: ChatRequest, conversation_id: U
     return StreamingResponse(
         chat_service.stream(message=chat_request.message, conversation_id=conversation_id, user_id=user.id), media_type="text/event-stream"
     )
-    
-@chat_router.post("/{conversation_id}")
-async def generate(request: Request, chat_request: ChatRequest, conversation_id: UUID | None, chat_service: ChatServiceDep, user: AuthenticateUserDep):
-    response = await chat_service.chat(message=chat_request.message, conversation_id=conversation_id, user_id=user.id)
-    
-    return JSONResponse(
-        content={
-            "response": response
-        },
-        status_code=status.HTTP_200_OK
-    )
