@@ -9,12 +9,14 @@ class Settings(BaseSettings):
     POSTGRES_USER: str
     POSTGRES_PASSWORD: str
     POSTGRES_DB: str
+    POSTGRES_HOST: str
     GROQ_KEY: str = None
     MODEL_PROVIDER: str
     MODEL_NAME: str
     PASSWORD_SECRET: str
     PASSWORD_ALGORITHM: str = "HS256"
     REDIS_PASSWORD: str
+    REDIS_HOST: str
     STREAM_UPDATE_SEC: int = 4
     CUTOFF_SEC: int = 30
     READ_FILE_CHUNK: int = 52428800

@@ -1,16 +1,43 @@
 services:
-  postgres:
-      image: pgvector/pgvector:0.8.3-pg18-trixie
-      container_name: postgres
+
+  fastapi:
+      build: 
+        context: ..
+        dockerfile: docker/Dockerfile
+      container_name: fastapi
       ports:
-        - "5432:5432"
+        - "8000:8000"
       volumes:
-        - postgres_data:/var/lib/postgresql/data
-      env_file:
-        - "./.env.postgres"
+        - fastapi_data:/code/assets
       networks:
         - backend
       restart: always
+      depends_on:
+        postgres:
+          condition: service_healthy
+        redis:
+          condition: service_healthy
+      env_file:
+        - "./.env.app"
+    
+  postgres:
+    image: pgvector/pgvector:0.8.3-pg18-trixie
+    container_name: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    env_file:
+      - "./.env.postgres"
+    networks:
+      - backend
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fastapi"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   redis:
     image: redis:8.8.0-trixie
@@ -25,6 +52,25 @@ services:
       - backend
     restart: always
     command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:-chatapp321}"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "chatapp321", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  migrate:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    command: alembic upgrade head
+    env_file:
+      - "./.env.app"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - backend
+    restart: "no"
 
 
 networks:
@@ -33,3 +79,4 @@ networks:
 volumes:
   postgres_data:
   redis_data:
+  fastapi_data:

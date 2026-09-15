@@ -12,7 +12,7 @@ class RedisCache:
         
         self.llmcache = SemanticCache(
             name="policy_cache",
-            redis_url=f"redis://:{settings.REDIS_PASSWORD}@localhost:6379/0",
+            redis_url=f"redis://:{settings.REDIS_PASSWORD}@{settings.REDIS_HOST}:6379/0",
             distance_threshold=0.1,
             vectorizer=vectorizer
         )

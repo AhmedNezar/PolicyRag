@@ -4,7 +4,7 @@ from config import Settings
 
 class Database:
     def __init__(self, settings: Settings):
-        self.database_url = f"postgresql+asyncpg://{settings.POSTGRES_USER}:{settings.POSTGRES_PASSWORD}@localhost:5432/{settings.POSTGRES_DB}"
+        self.database_url = f"postgresql+asyncpg://{settings.POSTGRES_USER}:{settings.POSTGRES_PASSWORD}@{settings.POSTGRES_HOST}:5432/{settings.POSTGRES_DB}"
         self.engine = create_async_engine(self.database_url, echo=True)
         self.async_session = async_sessionmaker(
             bind=self.engine,
