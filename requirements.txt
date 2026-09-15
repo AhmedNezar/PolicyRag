@@ -1,0 +1,41 @@
+# Web/API
+fastapi==0.136.3
+uvicorn==0.48.0
+python-multipart==0.0.29
+
+# Settings and validation
+pydantic==2.12.5
+pydantic-settings==2.14.1
+python-dotenv==1.2.2
+
+# Database and migrations
+SQLAlchemy==2.0.51
+asyncpg==0.31.0
+alembic==1.18.4
+pgvector==0.4.2
+
+# Auth/security
+python-jose==3.5.0
+passlib==1.7.4
+bcrypt==4.0.1
+
+# Providers
+groq==1.6.0
+google-genai==1.62.0
+
+# RAG and files
+langchain-text-splitters==1.1.2
+pypdf==6.10.2
+aiofiles==25.1.0
+
+# Redis, caching, rate limiting, background jobs
+redis==8.0.1
+redisvl==0.27.1
+slowapi==0.1.10
+celery==5.6.3
+
+# Testing and load testing
+pytest==9.1.1
+pytest-asyncio==1.4.0
+httpx==0.28.1
+locust==2.46.4
