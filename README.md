@@ -186,6 +186,7 @@ erDiagram
 | Full conversation memory | Retains prior context for answer generation | There is no summarization or token-budget trimming for the final answer prompt |
 | Alembic-managed schema | Makes database changes explicit and versioned | Migrations must run before serving application traffic |
 
+
 ## API surface
 
 | Method | Route | Purpose | Access |
@@ -293,8 +294,6 @@ locust -f tests/locustfile.py --host http://localhost:8000
 The test suite includes authentication service behavior, message lifecycle transitions, chunk splitting, retrieval and follow-up rewriting, and API journeys with overridden service dependencies. These API tests use fakes; they do not establish live PostgreSQL, Redis, provider, or full RAG integration coverage. Settings must still be available when application dependencies are imported, and the API tests retain the application's rate-limit middleware, which can require Redis.
 
 The Locust scenario logs in with two predefined development accounts and repeatedly lists conversations. Provision matching test accounts or update the scenario's credentials before running it. It does not exercise streaming generation or ingestion. Rate limits apply to live requests and must be considered when interpreting failures or throughput. No benchmark results are claimed here.
-
-[`datasets/policy_routing_v2/`](datasets/policy_routing_v2/README.md) contains a separate synthetic binary policy-routing dataset with 2,000 examples and scenario-grouped train/validation/test splits. Its context-contrast pairs test whether identical latest messages are interpreted differently with different histories. It is an experimental artifact, not the deployed five-route guardrail, and does not establish model accuracy or safety performance.
 
 ## Operational scope
 
