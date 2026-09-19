@@ -186,8 +186,6 @@ erDiagram
 | Full conversation memory | Retains prior context for answer generation | There is no summarization or token-budget trimming for the final answer prompt |
 | Alembic-managed schema | Makes database changes explicit and versioned | Migrations must run before serving application traffic |
 
-Celery is listed as a dependency, but there is no configured worker or task pipeline. PDF parsing, ingestion, and embedding run within the upload request.
-
 ## API surface
 
 | Method | Route | Purpose | Access |
