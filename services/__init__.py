@@ -6,3 +6,4 @@ from .password import PasswordService
 from .memory import MemoryService
 from .message import MessageService
 from .guardrail import GuardrailService
+from .router import RouterService

@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     GROQ_KEY: str = None
     MODEL_PROVIDER: str
     MODEL_NAME: str
+    SMALL_MODEL_NAME: str
+    GUARD_MODEL_NAME: str
     PASSWORD_SECRET: str
     PASSWORD_ALGORITHM: str = "HS256"
     REDIS_PASSWORD: str
@@ -30,6 +32,11 @@ class Settings(BaseSettings):
     EMBEDDING_PROVIDER: str
     CHUNK_SIZE: int
     CHUNK_OVERLAP: int
+    GUARD_THRESHOLD: float = 0.7
+    TYPESAFE_API_KEY: str
+    TYPESAFE_MODEL: str = "jev-1.13.0"
+    ROUTER_PROVIDER: str = "jav"
+    ROUTER_PROVIDER_FALLBACK: str = "llm"
     
     BASE_DIR: Path = Path(__file__).parent.parent
     

@@ -7,15 +7,18 @@ from providers.llm.LLMFactory import LLMFactory
 from providers.llm.LLMInterface import LLMInterface
 from providers.embedding import EmbeddingInterface, EmbeddingFactory
 from providers.cache import RedisCache
+from providers.router import RouterFactory, RouterInterface
 from config import get_settings, Settings
-from services import ChatService, PasswordService, TokenService, AuthService, ConversationService, MemoryService, MessageService, GuardrailService
+from services import ChatService, PasswordService, TokenService, AuthService, ConversationService, MemoryService, MessageService, GuardrailService, RouterService
 from services.rag import IngestionService, ChunkingService, RetrievalService
 from services.llm_calls import LLMCallService, TrackedLLM, TrackedEmbedding
 from repositories import ConversationRepository, TokenRepository, UserRepository, MessageRepository, DocumentRepository, ChunkRepository
 from repositories.llm_calls import LLMCallRepository
 
 _model: LLMInterface | None = None
+_small_model: LLMInterface | None = None
 _embedding_model: EmbeddingInterface | None = None
+_guard_model: LLMInterface | None = None
 
 db = Database(settings=get_settings())
 SettingsDep = Annotated[Settings, Depends(get_settings)]
@@ -35,8 +38,24 @@ DBSessionDep = Annotated[AsyncSession, Depends(get_db_session)]
 def get_raw_model():
     global _model
     if not _model:
-        _model = LLMFactory(settings=get_settings(), pricing_catalog=load_pricing()).create()
+        settings = get_settings()
+        _model = LLMFactory(model_name=settings.MODEL_NAME, settings=settings, pricing_catalog=load_pricing()).create()
     return _model
+
+def get_raw_small_model():
+    global _small_model
+    if not _small_model:
+        settings = get_settings()
+        _small_model = LLMFactory(model_name=settings.SMALL_MODEL_NAME, settings=settings, pricing_catalog=load_pricing()).create()
+    return _small_model
+
+def get_raw_guard_model():
+    global _guard_model
+    if not _guard_model:
+        settings = get_settings()
+        _guard_model = LLMFactory(model_name=settings.GUARD_MODEL_NAME, settings=settings, pricing_catalog=load_pricing()).create()
+    return _guard_model
+
 
 
 def get_call_service(session: DBSessionDep):
@@ -49,6 +68,16 @@ def get_model(calls: CallServiceDep):
     return TrackedLLM(get_raw_model(), calls)
 
 ModelDep = Annotated[TrackedLLM, Depends(get_model)]
+
+def get_small_model(calls: CallServiceDep):
+    return TrackedLLM(get_raw_small_model(), calls)
+
+SmallModelDep = Annotated[TrackedLLM, Depends(get_small_model)]
+
+def get_guard_model(calls: CallServiceDep):
+    return TrackedLLM(get_raw_guard_model(), calls)
+
+GuardModelDep = Annotated[TrackedLLM, Depends(get_guard_model)]
 
 def get_embedding_model(settings: SettingsDep, calls: CallServiceDep):
     global _embedding_model
@@ -141,8 +170,8 @@ def get_retrieval_service(chunk_repo: ChunkRepoDep, model: ModelDep) -> Retrieva
 
 RetrievalServiceDep = Annotated[RetrievalService, Depends(get_retrieval_service)]
 
-def get_guardrail_service(model: ModelDep) -> GuardrailService:
-    return GuardrailService(model)
+def get_guardrail_service(model: GuardModelDep, settings: SettingsDep) -> GuardrailService:
+    return GuardrailService(model, settings)
 
 GuardrailServiceDep = Annotated[GuardrailService, Depends(get_guardrail_service)]
 
@@ -151,10 +180,25 @@ def get_redis_cache(settings: SettingsDep) -> RedisCache:
 
 RedisCacheDep = Annotated[RedisCache, Depends(get_redis_cache)]
 
+def get_router(settings: SettingsDep, calls: CallServiceDep) -> RouterInterface:
+    return RouterFactory(settings, calls).create(provider=settings.ROUTER_PROVIDER)
+
+RouterDep = Annotated[RouterInterface, Depends(get_router)]
+
+def get_fallback_router(settings: SettingsDep, model: SmallModelDep, calls: CallServiceDep) -> RouterInterface:
+    return RouterFactory(settings, calls).create(provider=settings.ROUTER_PROVIDER_FALLBACK, model=model)
+
+FallbackRouterDep = Annotated[RouterInterface, Depends(get_fallback_router)]
+
+def get_router_service(main_router: RouterDep, fallback_router: FallbackRouterDep) -> RouterService:
+    return RouterService(main_router, fallback_router)
+
+RouterServiceDep = Annotated[RouterService, Depends(get_router_service)]
+
 def get_chat_service(model: ModelDep, settings: SettingsDep, message_service: MessageServiceDep,
                      conversation_service: ConversationServiceDep,
                      memory_service: MemoryServiceDep, guardrail: GuardrailServiceDep,
-                     retrieval_service: RetrievalServiceDep, embedding_model: EmbeddingModelDep, redis_cache: RedisCacheDep) -> ChatService:
+                     retrieval_service: RetrievalServiceDep, embedding_model: EmbeddingModelDep, redis_cache: RedisCacheDep, router: RouterServiceDep) -> ChatService:
     return ChatService(
         model,
         settings,
@@ -164,7 +208,8 @@ def get_chat_service(model: ModelDep, settings: SettingsDep, message_service: Me
         guardrail,
         retrieval_service,
         embedding_model,
-        redis_cache
+        redis_cache,
+        router
     )
 
 ChatServiceDep = Annotated[ChatService, Depends(get_chat_service)]

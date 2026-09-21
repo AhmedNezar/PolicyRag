@@ -11,9 +11,9 @@ import asyncio
 class Groq(LLMInterface):
     provider = "groq"
 
-    def __init__(self, settings: Settings, *, pricing: TokenPricing):
+    def __init__(self, model_name: str, settings: Settings, *, pricing: TokenPricing):
         super().__init__(pricing=pricing)
-        self.model = settings.MODEL_NAME
+        self.model = model_name
         self.client = AsyncGroq(api_key=settings.GROQ_KEY)
 
     def _usage(self, raw) -> LLMUsage:
@@ -37,11 +37,13 @@ class Groq(LLMInterface):
                 "schema": output_schema.model_json_schema(),
             }}
             
+        messages = [{"role": "system", "content": system_message}] + user_messages if system_message != "" else user_messages
         response = await self.client.chat.completions.create(
             model=self.model, 
-            messages=[{"role": "system", "content": system_message}] + user_messages,
+            messages=messages,
             **options
         )
+        
         usage = self._usage(response.usage)
         try:
             content = response.choices[0].message.content or ""
@@ -64,8 +66,7 @@ class Groq(LLMInterface):
                     content = choice.delta.content or ""
                     if content:
                         yield LLMStreamResponse(type="data", content=content, raw_content=content, usage=usage)
-                        
-                    await asyncio.sleep(0.05)
+                        await asyncio.sleep(0.05)
                     
             if finish_reason != "stop":
                 raise GenerationError("Generation did not finish normally", usage)

@@ -15,12 +15,13 @@ import time
 from contextlib import aclosing
 from asyncio import CancelledError
 from models import LLMLatency
+from .router import RouterService
 
 class ChatService:
     def __init__(self, model: TrackedLLM, settings: Settings, memory_service: MemoryService,
                  message_service: MessageService, conversation_service: ConversationService,
                  guardrail: GuardrailService, retrieval_service: RetrievalService, embedding_model: TrackedEmbedding,
-                 cache: RedisCache):
+                 cache: RedisCache, router: RouterService):
         self.model = model
         self.settings = settings
         self.memory_service = memory_service
@@ -30,6 +31,7 @@ class ChatService:
         self.retrieval_service = retrieval_service
         self.embedding_model = embedding_model
         self.cache = cache
+        self.router = router
 
     async def stream(self, message: str, conversation_id: UUID | None, user_id: UUID) -> AsyncGenerator[str, None]:
         start_time = time.monotonic()
@@ -39,6 +41,17 @@ class ChatService:
             conversation = await self.conversation_service.new_chat_conversation(message, user_id)
         else:
             history = await self.memory_service.get_messages(conversation_id)
+            
+        is_safe = await self.guardrail.guard(message, conversation_id=conversation.id)
+        if not is_safe:
+            yield self.sse_event("token", "Sorry, but I can't help you with that.")
+            conversation_data = json.dumps({
+                "title": conversation.title,
+                "conversation_id": str(conversation.id)
+            })
+            yield self.sse_event("conversation", conversation_data)
+            yield self.sse_event("done", "[DONE]")
+            return
 
         new_message = await self.message_service.create_message(conversation, message)
         call_context = {"message_id": new_message.id, "conversation_id": conversation.id}
@@ -46,12 +59,13 @@ class ChatService:
         ttft = None
         completed = False
         try:
-            system_message, user_message, needs_retrieval, followup = await self.guardrail.route(message, history[-4:], **call_context)
+            system_message, followup, needs_retrieval = await self.router.route(message, history[-4:], **call_context)
+            
             if history and followup:
-                user_message = await self.retrieval_service.rewrite(history, user_message, **call_context)
+                message = await self.retrieval_service.rewrite(history, message, **call_context)
             embeddings = None
             if needs_retrieval:
-                embeddings = await self.embedding_model.embed_retrieve(query=user_message, **call_context)
+                embeddings = await self.embedding_model.embed_retrieve(query=message, **call_context)
                 cached_response = await self.cache.retrieve(embeddings)
                 if cached_response:
                     total_time = time.monotonic() - start_time
@@ -75,7 +89,7 @@ class ChatService:
                 full_messages.append({"role": "system", "content": CONTEXT_PROMPT.format(context=context)})
             if history:
                 full_messages.extend(history)
-            full_messages.append({"role": "user", "content": user_message})
+            full_messages.append({"role": "user", "content": message})
 
             last_saved_time = time.monotonic()
             async with aclosing(self.model.stream(messages=full_messages, **call_context)) as answer_stream:
@@ -101,7 +115,7 @@ class ChatService:
                         completed = True
 
                         if needs_retrieval and context_chunks:
-                            await self.cache.add(user_message, full_response, embeddings)
+                            await self.cache.add(message, full_response, embeddings)
 
                         conversation_data = json.dumps({
                             "title": conversation.title,
@@ -115,7 +129,8 @@ class ChatService:
                     new_message.id, full_response,
                     LLMLatency(ttft=ttft, total_time=time.monotonic() - start_time))
             raise
-        except Exception:
+        except Exception as e:
+            print(e)
             total_time = time.monotonic() - start_time
             latency = LLMLatency(ttft=ttft, total_time=total_time)
             _ = await self.message_service.fail_message(new_message.id, full_response, latency)

@@ -1,5 +1,4 @@
 from pydantic import BaseModel
-from typing import Literal
 from enum import Enum
 
 class ChatIntents(str, Enum):
@@ -7,12 +6,10 @@ class ChatIntents(str, Enum):
     POLICY_QUESTION = "policy_question"
     POLICY_FOLLOWUP = "policy_followup"
     UNSUPPORTED = "unsupported"
-    BLOCKED = "blocked"
 
 class ChatRouter(BaseModel):
-    allowed: bool
     route: ChatIntents
-    needs_retrieval: bool
+    confidence: float
     
 class QueryRewrite(BaseModel):
     query: str

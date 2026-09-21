@@ -1,6 +1,7 @@
 from models import LLMUsage
 from models.llm_calls import LLMCallType
 from providers.llm.LLMInterface import LLMInterface
+from providers.embedding.EmbeddingInterface import EmbeddingInterface
 
 
 class LLMCallService:
@@ -24,7 +25,7 @@ class LLMCallService:
 
 
 class TrackedLLM:
-    def __init__(self, provider, calls: LLMCallService):
+    def __init__(self, provider: LLMInterface, calls: LLMCallService):
         self.provider = provider
         self.calls = calls
 
@@ -34,6 +35,7 @@ class TrackedLLM:
         try:
             output, usage = await self.provider.generate(system_message, user_messages, output_schema, schema_name)
         except BaseException as error:
+            print(error)
             await self.calls.record(
                 self.provider, 
                 LLMCallType.GENERATION,
@@ -79,7 +81,7 @@ class TrackedLLM:
 
 
 class TrackedEmbedding:
-    def __init__(self, provider, calls: LLMCallService):
+    def __init__(self, provider: EmbeddingInterface, calls: LLMCallService):
         self.provider = provider
         self.calls = calls
 
