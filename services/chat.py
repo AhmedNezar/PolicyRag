@@ -1,4 +1,4 @@
-from providers.llm.LLMInterface import LLMInterface
+from services.llm_calls import TrackedLLM
 from typing import AsyncGenerator
 from uuid import UUID
 import json
@@ -9,15 +9,17 @@ from .conversations import ConversationService
 from .guardrail import GuardrailService
 from .rag.retrieval import RetrievalService
 from infrastructure.prompts import CONTEXT_PROMPT
-from providers.embedding import EmbeddingInterface
+from services.llm_calls import TrackedEmbedding
 from providers.cache import RedisCache
 import time
-from models import LLMUsage
+from contextlib import aclosing
+from asyncio import CancelledError
+from models import LLMLatency
 
 class ChatService:
-    def __init__(self, model: LLMInterface, settings: Settings, memory_service: MemoryService,
+    def __init__(self, model: TrackedLLM, settings: Settings, memory_service: MemoryService,
                  message_service: MessageService, conversation_service: ConversationService,
-                 guardrail: GuardrailService, retrieval_service: RetrievalService, embedding_model: EmbeddingInterface,
+                 guardrail: GuardrailService, retrieval_service: RetrievalService, embedding_model: TrackedEmbedding,
                  cache: RedisCache):
         self.model = model
         self.settings = settings
@@ -28,87 +30,97 @@ class ChatService:
         self.retrieval_service = retrieval_service
         self.embedding_model = embedding_model
         self.cache = cache
-    
+
     async def stream(self, message: str, conversation_id: UUID | None, user_id: UUID) -> AsyncGenerator[str, None]:
+        start_time = time.monotonic()
         history = []
         conversation = await self.conversation_service.get_conversation(conversation_id, user_id)
         if not conversation:
             conversation = await self.conversation_service.new_chat_conversation(message, user_id)
         else:
             history = await self.memory_service.get_messages(conversation_id)
-        
-        system_message, user_message, needs_retrieval, followup = await self.guardrail.route(message,  history[-4:])
-        
-        if history and followup:
-            user_message = await self.retrieval_service.rewrite(history, user_message)
-        
-        new_message = await self.message_service.create_message(conversation, message)
-        print("Message created")
-        print(new_message.id)
-        
-        embeddings = None
-        if needs_retrieval:
-            embeddings = await self.embedding_model.embed_retrieve(query=user_message)
-            cached_response = await self.cache.retrieve(embeddings)
-            if cached_response:
-                yield self.sse_event("token", cached_response)
-                usage = LLMUsage(
-                    prompt_tokens=0,
-                    response_tokens=0,
-                    total_tokens=0,
-                    input_cost=0,
-                    output_cost=0,
-                    total_cost=0
-                )
-                _ = await self.message_service.complete_message(new_message.id, cached_response, usage)
-                conversation_data = json.dumps({
-                    "title": conversation.title,
-                    "conversation_id": str(conversation.id)
-                })
-                yield self.sse_event("conversation", conversation_data)
-                yield self.sse_event("done", "[DONE]")
-                return
-        
-        context_chunks = await self.retrieval_service.retrieve(embeddings) if embeddings else []
-        
-        full_messages = [{"role": "system", "content": system_message}]
-        if context_chunks:
-            context = "\n".join(context_chunks)
-            full_messages.append({"role": "system", "content": CONTEXT_PROMPT.format(context=context)})
-        if history:
-            full_messages.extend(history)
-        full_messages.append({"role": "user", "content": user_message})
-        
-        full_response = ""
-        last_saved_time = time.monotonic()
-        try:
-            async for chunk in self.model.stream(messages=full_messages):
-                if chunk.type == "data":     
-                    if not chunk.done:
-                        yield self.sse_event("token", chunk.raw_content)
-                        full_response += chunk.raw_content
-                        
-                        if time.monotonic() - last_saved_time >= self.settings.STREAM_UPDATE_SEC:
-                            _ = await self.message_service.update_message(new_message.id, full_response)
-                            last_saved_time = time.monotonic()
-                        
-                else:
-                    usage = chunk.usage if chunk.usage else LLMUsage()
-                    _ = await self.message_service.complete_message(new_message.id, full_response, usage)
-                    if needs_retrieval and context_chunks:
-                        await self.cache.add(user_message, full_response, embeddings)
 
+        new_message = await self.message_service.create_message(conversation, message)
+        call_context = {"message_id": new_message.id, "conversation_id": conversation.id}
+        full_response = ""
+        ttft = None
+        completed = False
+        try:
+            system_message, user_message, needs_retrieval, followup = await self.guardrail.route(message, history[-4:], **call_context)
+            if history and followup:
+                user_message = await self.retrieval_service.rewrite(history, user_message, **call_context)
+            embeddings = None
+            if needs_retrieval:
+                embeddings = await self.embedding_model.embed_retrieve(query=user_message, **call_context)
+                cached_response = await self.cache.retrieve(embeddings)
+                if cached_response:
+                    total_time = time.monotonic() - start_time
+                    latency = LLMLatency(ttft=total_time, total_time=total_time)
+                    yield self.sse_event("token", cached_response)
+                    _ = await self.message_service.complete_message(new_message.id, cached_response, latency)
+                    completed = True
                     conversation_data = json.dumps({
                         "title": conversation.title,
                         "conversation_id": str(conversation.id)
                     })
                     yield self.sse_event("conversation", conversation_data)
                     yield self.sse_event("done", "[DONE]")
-        except Exception as e:
-            print(e)
-            _ = await self.message_service.fail_message(new_message.id, full_response)
+                    return
+
+            context_chunks = await self.retrieval_service.retrieve(embeddings) if embeddings else []
+
+            full_messages = [{"role": "system", "content": system_message}]
+            if context_chunks:
+                context = "\n".join(context_chunks)
+                full_messages.append({"role": "system", "content": CONTEXT_PROMPT.format(context=context)})
+            if history:
+                full_messages.extend(history)
+            full_messages.append({"role": "user", "content": user_message})
+
+            last_saved_time = time.monotonic()
+            async with aclosing(self.model.stream(messages=full_messages, **call_context)) as answer_stream:
+                async for chunk in answer_stream:
+                    if chunk.type == "data":
+                        if not chunk.raw_content:
+                            continue
+
+                        if ttft is None:
+                            ttft = time.monotonic() - start_time
+
+                        full_response += chunk.raw_content
+                        yield self.sse_event("token", chunk.raw_content)
+
+                        if time.monotonic() - last_saved_time >= self.settings.STREAM_UPDATE_SEC:
+                            _ = await self.message_service.update_message(new_message.id, full_response)
+                            last_saved_time = time.monotonic()
+
+                    else:
+                        total_time = time.monotonic() - start_time
+                        latency = LLMLatency(ttft=ttft, total_time=total_time)
+                        _ = await self.message_service.complete_message(new_message.id, full_response, latency)
+                        completed = True
+
+                        if needs_retrieval and context_chunks:
+                            await self.cache.add(user_message, full_response, embeddings)
+
+                        conversation_data = json.dumps({
+                            "title": conversation.title,
+                            "conversation_id": str(conversation.id)
+                        })
+                        yield self.sse_event("conversation", conversation_data)
+                        yield self.sse_event("done", "[DONE]")
+        except (CancelledError, GeneratorExit):
+            if not completed:
+                await self.message_service.cancel_message(
+                    new_message.id, full_response,
+                    LLMLatency(ttft=ttft, total_time=time.monotonic() - start_time))
+            raise
+        except Exception:
+            total_time = time.monotonic() - start_time
+            latency = LLMLatency(ttft=ttft, total_time=total_time)
+            _ = await self.message_service.fail_message(new_message.id, full_response, latency)
             yield self.sse_event("error", "Provider failed")
-        
+
     def sse_event(self, event: str, data: str) -> str:
         lines = str(data).splitlines()
 

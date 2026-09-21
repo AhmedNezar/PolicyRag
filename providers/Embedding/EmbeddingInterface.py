@@ -1,15 +1,12 @@
 from abc import ABC, abstractmethod
+from models import LLMUsage
 
 class EmbeddingInterface(ABC):
-    
+
     @abstractmethod
-    async def embed_index(self, title: str, content: list[str]) -> list[list[float]]:
+    async def embed_index(self, title: str, content: list[str]) -> tuple[list[list[float]], LLMUsage]:
         pass
-    
+
     @abstractmethod
-    async def embed_retrieve(self, query: str) -> list[float]:
-        pass
-    
-    @abstractmethod
-    def embed_sync(self, query: str) -> list[float]:
+    async def embed_retrieve(self, query: str) -> tuple[list[float], LLMUsage]:
         pass

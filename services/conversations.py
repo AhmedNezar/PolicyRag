@@ -4,13 +4,13 @@ import asyncio
 from uuid import UUID
 from exceptions import UnauthorizedException
 from config import Settings
-from providers.llm.LLMInterface import LLMInterface
-from models import MessageStatus
+from services.llm_calls import TrackedLLM
+from models import TitleSummarization
 from datetime import datetime, UTC, timedelta
 
 
 class ConversationService:
-    def __init__(self, repository: ConversationRepository, message_repo: MessageRepository, settings: Settings, model: LLMInterface):
+    def __init__(self, repository: ConversationRepository, message_repo: MessageRepository, settings: Settings, model: TrackedLLM):
         self.repository = repository
         self.message_repo = message_repo
         self.settings = settings
@@ -26,17 +26,21 @@ class ConversationService:
         if conversation and conversation.user_id != user_id:
             raise UnauthorizedException
         return conversation
-    
+
     async def new_chat_conversation(self, message: str, user_id: UUID) -> Conversation:
-        title = await self.model.generate_title(message)
-        model_type = self.settings.MODEL_NAME
         conversation = await self.repository.create({
-            "title": title,
-            "model_type": model_type,
-            "user_id": user_id
+            "title": "New conversation",
+            "model_type": self.settings.MODEL_NAME,
+            "user_id": user_id,
         })
-        
-        return conversation
+        result, _ = await self.model.generate(
+            system_message="Generate a concise conversation title based on the user's message.",
+            user_messages=[{"role": "user", "content": message}],
+            output_schema=TitleSummarization,
+            schema_name="title_generation",
+            conversation_id=conversation.id,
+        )
+        return await self.repository.update(conversation, {"title": result.title})
 
     async def create_conversation(self, conversation_data: dict) -> Conversation:
         return await self.repository.create(conversation_data)

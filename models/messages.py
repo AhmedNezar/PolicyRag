@@ -11,19 +11,24 @@ class LLMUsage(BaseModel):
     output_cost: Decimal | None = None
     total_cost: Decimal | None = None
 
+
+
 class LLMResponse(BaseModel):
     prompt_content: str
     response_content: str
     usage: LLMUsage | None = None
     is_success: bool | None = None
-    
+
 class LLMStreamResponse(BaseModel):
     type: Literal["data", "stop"]
     content: str
     raw_content: str
     usage: LLMUsage | None = None
-    done: bool = False
-    
+
+class LLMLatency(BaseModel):
+    ttft: float | None = None
+    total_time: float
+
 class MessageStatus(Enum):
     PENDING = "pending"
     STREAMING = "streaming"

@@ -10,7 +10,9 @@ from providers.cache import RedisCache
 from config import get_settings, Settings
 from services import ChatService, PasswordService, TokenService, AuthService, ConversationService, MemoryService, MessageService, GuardrailService
 from services.rag import IngestionService, ChunkingService, RetrievalService
+from services.llm_calls import LLMCallService, TrackedLLM, TrackedEmbedding
 from repositories import ConversationRepository, TokenRepository, UserRepository, MessageRepository, DocumentRepository, ChunkRepository
+from repositories.llm_calls import LLMCallRepository
 
 _model: LLMInterface | None = None
 _embedding_model: EmbeddingInterface | None = None
@@ -27,24 +29,34 @@ async def get_db_session():
         raise e
     finally:
         await session.close()
-        
+
 DBSessionDep = Annotated[AsyncSession, Depends(get_db_session)]
-        
-def get_model():
+
+def get_raw_model():
     global _model
     if not _model:
         _model = LLMFactory(settings=get_settings(), pricing_catalog=load_pricing()).create()
     return _model
 
-ModelDep = Annotated[LLMInterface, Depends(get_model)]
 
-def get_embedding_model(settings: SettingsDep):
+def get_call_service(session: DBSessionDep):
+    return LLMCallService(LLMCallRepository(session))
+
+CallServiceDep = Annotated[LLMCallService, Depends(get_call_service)]
+
+
+def get_model(calls: CallServiceDep):
+    return TrackedLLM(get_raw_model(), calls)
+
+ModelDep = Annotated[TrackedLLM, Depends(get_model)]
+
+def get_embedding_model(settings: SettingsDep, calls: CallServiceDep):
     global _embedding_model
     if not _embedding_model:
         _embedding_model = EmbeddingFactory(settings).create()
-    return _embedding_model
+    return TrackedEmbedding(_embedding_model, calls)
 
-EmbeddingModelDep = Annotated[EmbeddingInterface, Depends(get_embedding_model)]
+EmbeddingModelDep = Annotated[TrackedEmbedding, Depends(get_embedding_model)]
 
 def get_password_service() -> PasswordService:
     return PasswordService()
@@ -58,7 +70,7 @@ TokenRepoDep = Annotated[TokenRepository, Depends(get_token_repo)]
 
 def get_token_service(token_repo: TokenRepoDep, settings: SettingsDep) -> TokenService:
     return TokenService(token_repo, settings)
-    
+
 TokenServiceDep = Annotated[TokenService, Depends(get_token_service)]
 
 def get_user_repo(session: DBSessionDep) -> UserRepository:
@@ -67,10 +79,10 @@ def get_user_repo(session: DBSessionDep) -> UserRepository:
 UserRepoDep = Annotated[UserRepository, Depends(get_user_repo)]
 
 def get_auth_service(password_service: PasswordServiceDep,
-                     token_service: TokenServiceDep, 
+                     token_service: TokenServiceDep,
                      user_repo: UserRepoDep) -> AuthService:
     return AuthService(password_service, token_service, user_repo)
-    
+
 AuthServiceDep = Annotated[AuthService, Depends(get_auth_service)]
 
 def get_conversation_repo(session: DBSessionDep) -> ConversationRepository:
@@ -112,7 +124,7 @@ def get_chunk_repo(session: DBSessionDep) -> ChunkRepository:
     return ChunkRepository(session)
 
 ChunkRepoDep = Annotated[ChunkRepository, Depends(get_chunk_repo)]
-    
+
 def get_chunk_service(settings: SettingsDep) -> ChunkingService:
     return ChunkingService(settings)
 
@@ -134,14 +146,14 @@ def get_guardrail_service(model: ModelDep) -> GuardrailService:
 
 GuardrailServiceDep = Annotated[GuardrailService, Depends(get_guardrail_service)]
 
-def get_redis_cache(settings: SettingsDep, embedding_model: EmbeddingModelDep) -> RedisCache:
-    return RedisCache(settings, embedding_model)
+def get_redis_cache(settings: SettingsDep) -> RedisCache:
+    return RedisCache(settings)
 
 RedisCacheDep = Annotated[RedisCache, Depends(get_redis_cache)]
 
 def get_chat_service(model: ModelDep, settings: SettingsDep, message_service: MessageServiceDep,
                      conversation_service: ConversationServiceDep,
-                     memory_service: MemoryServiceDep, guardrail: GuardrailServiceDep, 
+                     memory_service: MemoryServiceDep, guardrail: GuardrailServiceDep,
                      retrieval_service: RetrievalServiceDep, embedding_model: EmbeddingModelDep, redis_cache: RedisCacheDep) -> ChatService:
     return ChatService(
         model,

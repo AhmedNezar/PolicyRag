@@ -5,6 +5,7 @@ import pytest
 
 from infrastructure.prompts import REWRITE_PROMPT
 from models.chat import QueryRewrite
+from models import LLMUsage
 from services.rag.retrieval import RetrievalService
 
 
@@ -51,7 +52,7 @@ async def test_retrieve_returns_empty_list_when_no_chunks_exist(
 
 @pytest.mark.asyncio
 async def test_rewrite_returns_generated_query(retrieval_service, model):
-    model.generate.return_value = QueryRewrite(query="annual leave policy")
+    model.generate.return_value = (QueryRewrite(query="annual leave policy"), LLMUsage())
     history = [
         {"role": "user", "content": "Tell me about leave"},
         {"role": "assistant", "content": "Which type of leave?"},
@@ -75,7 +76,7 @@ async def test_rewrite_uses_only_ten_most_recent_messages(
     retrieval_service,
     model,
 ):
-    model.generate.return_value = QueryRewrite(query="rewritten")
+    model.generate.return_value = (QueryRewrite(query="rewritten"), LLMUsage())
     history = [
         {"role": "user", "content": f"message-{index}"}
         for index in range(12)
