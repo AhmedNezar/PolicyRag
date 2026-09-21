@@ -1,11 +1,15 @@
 from typing import Literal
 from pydantic import BaseModel
 from enum import Enum
+from decimal import Decimal
 
 class LLMUsage(BaseModel):
     prompt_tokens: int | None = None
     response_tokens: int | None = None
     total_tokens: int | None = None
+    input_cost: Decimal | None = None
+    output_cost: Decimal | None = None
+    total_cost: Decimal | None = None
 
 class LLMResponse(BaseModel):
     prompt_content: str

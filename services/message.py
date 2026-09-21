@@ -26,12 +26,15 @@ class MessageService:
         return message
     
     
-    async def complete_message(self, message_id: UUID, response: str, usage: LLMUsage) -> Message:            
+    async def complete_message(self, message_id: UUID, response: str, usage: LLMUsage) -> Message:          
         completed_message = {
             "response_content": response,
             "prompt_tokens": usage.prompt_tokens,
             "response_tokens": usage.response_tokens,
             "total_tokens": usage.total_tokens,
+            "input_cost": usage.input_cost,
+            "output_cost": usage.output_cost,
+            "total_cost": usage.total_cost,
             "status": MessageStatus.COMPLETED,
             "is_success": True
         }

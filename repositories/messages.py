@@ -40,6 +40,9 @@ class MessageRepository:
             prompt_tokens=llm_response.usage.prompt_tokens,
             response_tokens=llm_response.usage.response_tokens,
             total_tokens=llm_response.usage.total_tokens,
+            input_cost=llm_response.usage.input_cost,
+            output_cost=llm_response.usage.output_cost,
+            total_cost=llm_response.usage.total_cost,
             is_success=llm_response.is_success,
             status=MessageStatus.PENDING
         )

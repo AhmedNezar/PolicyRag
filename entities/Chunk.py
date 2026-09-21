@@ -22,7 +22,7 @@ class Chunk(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(UTC), 
-        onupdate=datetime.now(UTC)
+        onupdate=lambda: datetime.now(UTC)
     )
     
     document = relationship("Document", back_populates="chunks")

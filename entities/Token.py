@@ -20,7 +20,7 @@ class Token(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(UTC), 
-        onupdate=datetime.now(UTC)
+        onupdate=lambda: datetime.now(UTC)
     )
     
     user = relationship("User", back_populates="tokens")

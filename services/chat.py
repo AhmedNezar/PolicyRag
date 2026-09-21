@@ -43,6 +43,8 @@ class ChatService:
             user_message = await self.retrieval_service.rewrite(history, user_message)
         
         new_message = await self.message_service.create_message(conversation, message)
+        print("Message created")
+        print(new_message.id)
         
         embeddings = None
         if needs_retrieval:
@@ -53,7 +55,10 @@ class ChatService:
                 usage = LLMUsage(
                     prompt_tokens=0,
                     response_tokens=0,
-                    total_tokens=0
+                    total_tokens=0,
+                    input_cost=0,
+                    output_cost=0,
+                    total_cost=0
                 )
                 _ = await self.message_service.complete_message(new_message.id, cached_response, usage)
                 conversation_data = json.dumps({
@@ -99,7 +104,8 @@ class ChatService:
                     })
                     yield self.sse_event("conversation", conversation_data)
                     yield self.sse_event("done", "[DONE]")
-        except Exception:
+        except Exception as e:
+            print(e)
             _ = await self.message_service.fail_message(new_message.id, full_response)
             yield self.sse_event("error", "Provider failed")
         

@@ -221,3 +221,5 @@ __marimo__/
 
 assets/*
 !assets/.gitkeep
+
+datasets

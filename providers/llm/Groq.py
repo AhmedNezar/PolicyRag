@@ -7,10 +7,12 @@ from models import LLMResponse, LLMStreamResponse, LLMUsage
 from .schemas.title import TitleSummarization
 import json
 from pydantic import BaseModel
+from models import TokenPricing
 
 class Groq(LLMInterface):
     
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings, *, pricing: TokenPricing):
+        super().__init__(pricing=pricing)
         self.model = settings.MODEL_NAME
         self.client = AsyncGroq(api_key=settings.GROQ_KEY)
         
@@ -51,6 +53,8 @@ class Groq(LLMInterface):
             if chunk.choices[0].finish_reason == "stop":
                 prompt_tokens = chunk.usage.prompt_tokens
                 response_tokens = chunk.usage.completion_tokens
+                input_cost, output_cost, total_cost = self.pricing.estimate(prompt_tokens, response_tokens)
+                print(f"-------------------------------\nInput cost: {input_cost}\nOutput cost: {output_cost}\nTotal cost: {total_cost}\n-------------------------------")
                 yield LLMStreamResponse(
                     type="stop",
                     content="",
@@ -58,7 +62,10 @@ class Groq(LLMInterface):
                     usage=LLMUsage(
                         prompt_tokens=prompt_tokens,
                         response_tokens=response_tokens,
-                        total_tokens=prompt_tokens+response_tokens
+                        total_tokens=prompt_tokens+response_tokens,
+                        input_cost=input_cost,
+                        output_cost=output_cost,
+                        total_cost=total_cost
                     )
                 )
             else:

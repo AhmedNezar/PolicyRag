@@ -20,7 +20,7 @@ class Conversation(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(UTC), 
-        onupdate=datetime.now(UTC)
+        onupdate=lambda: datetime.now(UTC)
     )
     
     messages = relationship("Message", back_populates="conversation", cascade="all, delete-orphan")

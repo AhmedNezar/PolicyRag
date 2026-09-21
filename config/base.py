@@ -1,5 +1,9 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pathlib import Path
+import json
+from models import TokenPricing
+
+pricing_path = Path(__file__).resolve().parent / "llm_pricing.json"
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -31,3 +35,16 @@ class Settings(BaseSettings):
     
 def get_settings():
     return Settings()
+
+def load_pricing() -> dict[str, dict[str, TokenPricing]]:
+    raw = json.loads(pricing_path.read_text(encoding="utf-8"))
+    
+    pricing = {
+        provider: {
+            model: TokenPricing.model_validate(model_pricing)
+            for model, model_pricing in models.items()
+        }
+        for provider, models in raw.items()
+    }
+    
+    return pricing

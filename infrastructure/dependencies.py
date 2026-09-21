@@ -1,5 +1,5 @@
 from .database import Database
-from config import get_settings
+from config import get_settings, load_pricing
 from typing import Annotated
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import Depends
@@ -33,7 +33,7 @@ DBSessionDep = Annotated[AsyncSession, Depends(get_db_session)]
 def get_model():
     global _model
     if not _model:
-        _model = LLMFactory(settings=get_settings()).create()
+        _model = LLMFactory(settings=get_settings(), pricing_catalog=load_pricing()).create()
     return _model
 
 ModelDep = Annotated[LLMInterface, Depends(get_model)]

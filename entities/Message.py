@@ -1,4 +1,5 @@
 from .base import Base
+from decimal import Decimal
 from sqlalchemy import ForeignKey, DateTime
 from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -20,6 +21,11 @@ class Message(Base):
     prompt_tokens: Mapped[int | None] = mapped_column()
     response_tokens: Mapped[int | None] = mapped_column()
     total_tokens: Mapped[int | None] = mapped_column()
+    input_cost: Mapped[Decimal | None] = mapped_column()
+    output_cost: Mapped[Decimal | None] = mapped_column()
+    total_cost: Mapped[Decimal | None] = mapped_column()
+    ttft: Mapped[float | None] = mapped_column()
+    total_time: Mapped[float | None] = mapped_column()
     is_success: Mapped[bool | None] = mapped_column()
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -28,7 +34,7 @@ class Message(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(UTC), 
-        onupdate=datetime.now(UTC)
+        onupdate=lambda: datetime.now(UTC)
     )
     
     conversation = relationship("Conversation", back_populates="messages")

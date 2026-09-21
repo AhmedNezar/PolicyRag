@@ -1,1 +1,1 @@
-from .base import get_settings, Settings
+from .base import get_settings, Settings, load_pricing
