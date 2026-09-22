@@ -2,15 +2,16 @@
 
 A FastAPI application that turns company policy PDFs into a conversational knowledge base. It combines retrieval-augmented generation (RAG), streamed answers, persistent conversations, revocable authentication, Redis-backed rate limiting, and semantic response caching.
 
-The backend uses **Groq for language generation**, **Gemini for embeddings**, **PostgreSQL with pgvector for retrieval**, and **Redis for caching and request limits**. A browser chat client is included at `/pages/client.html`.
+The backend uses **Groq for language generation and input guarding**, **TypeSafe Jev for intent classification**, **Gemini for embeddings**, **PostgreSQL with pgvector for retrieval**, and **Redis for caching and request limits**. A browser chat client is included at `/pages/client.html`.
 
 ## Engineering highlights
 
 - **Layered architecture:** API controllers, application services, repositories, and provider adapters have separate responsibilities and are wired through FastAPI dependencies.
-- **Selective retrieval:** a structured intent router distinguishes policy questions, follow-ups, small talk, unsupported requests, and blocked requests.
+- **Selective retrieval:** TypeSafe Jev distinguishes policy questions, follow-ups, small talk, and unsupported requests, with a Groq LLM fallback when confidence is below 0.6. A separate guard model checks input before routing.
+- **Per-call accounting:** provider calls record token usage, estimated costs, success or failure, and available message/conversation IDs in a dedicated ledger.
 - **Context-aware search:** follow-up questions are rewritten into standalone queries before embedding and retrieval.
 - **Semantic reuse:** similar policy questions can reuse a cached answer, bypassing vector retrieval and final answer generation.
-- **Durable streaming:** partial answers are periodically saved, with explicit pending, streaming, completed, and failed states.
+- **Durable streaming:** partial answers are periodically saved, with explicit pending, streaming, completed, failed, and cancelled states, plus time-to-first-token and total-time measurements.
 - **Server-side session revocation:** signed JWTs reference database token records, allowing logout to invalidate a session before its JWT expires.
 - **Shared rate-limit storage:** Redis counters allow application instances using the same configuration to share enforcement state.
 - **Indexed vector search:** an Alembic migration creates a cosine HNSW index over 768-dimensional policy embeddings.
@@ -25,8 +26,16 @@ flowchart TD
     Limits --> Redis[(Redis)]
     Auth --> DB[(PostgreSQL + pgvector)]
     API --> Chat[Chat service]
-    Chat --> Router[Intent routing and follow-up rewriting]
-    Router --> LLM[Groq adapter]
+    Chat --> Guard[Input guard]
+    Guard --> LLM[Groq adapter]
+    Chat --> Router[Intent router]
+    Router --> Jev[TypeSafe Jev]
+    Router -->|Confidence below 0.6| LLM
+    Retrieval -->|Follow-up rewriting| LLM
+    Jev --> Calls[Per-call usage and cost tracking]
+    LLM --> Calls
+    Embeddings --> Calls
+    Calls --> DB
     Chat --> Cache[Semantic cache]
     Cache --> Redis
     Chat --> Retrieval[Retrieval service]
@@ -49,25 +58,34 @@ The diagram shows component relationships; the request sequence is described bel
 | Application logic | `services/` | Authentication, conversation ownership, routing, memory, message lifecycle, and chat orchestration |
 | RAG pipeline | `services/rag/` | PDF ingestion, chunking, query rewriting, and retrieval |
 | Persistence | `repositories/`, `entities/` | SQLAlchemy queries, relationships, and database records |
-| External integrations | `providers/` | LLM, embedding, and semantic cache adapters |
+| External integrations | `providers/` | LLM, intent router, embedding, and semantic cache adapters |
 | Infrastructure | `infrastructure/`, `config/` | Dependency wiring, async database sessions, rate limits, prompts, and environment settings |
 | Delivery and validation | `alembic/`, `docker/`, `tests/` | Schema migrations, container definitions, automated tests, and load-test scenarios |
 
-Database access uses SQLAlchemy's async engine with `asyncpg` and request-scoped sessions. LLM and embedding adapters are lazily reused within each application process. Provider interfaces and factories provide extension points; the current implementations are Groq and Gemini.
+Database access uses SQLAlchemy's async engine with `asyncpg` and request-scoped sessions. LLM and embedding adapters are lazily reused within each application process. Router adapters are wired through `RouterFactory`; `JavRouter` calls TypeSafe Jev and `LLMRouter` uses a tracked Groq model. `LLMCallService` persists call records through the request's database session.
 
 ## How a chat request works
 
 1. Authenticate the bearer token and resolve the conversation. Existing conversations are checked against the current user's ID. A new conversation receives an LLM-generated title.
-2. Load conversation history. The router receives the latest four history messages and returns a validated `ChatRouter` object with `route`, `allowed`, and `needs_retrieval` fields.
-3. For policy follow-ups, rewrite the question using up to ten recent history messages. For example, “What about contractors?” can become a standalone policy search about contractor leave.
-4. Create a pending message record. If retrieval is needed, embed the query and check the semantic cache.
-5. On a cache hit, emit the saved answer, mark the message complete, and finish the stream.
-6. On a cache miss, retrieve the five nearest policy chunks by cosine distance. Assemble the route-specific system prompt, retrieved context, conversation history, and latest question.
-7. Stream the generated answer, periodically save its accumulated text, and record completion and token usage. Cache the answer when the request required retrieval and returned policy chunks.
+2. Load history for an existing conversation and check the latest message with `GUARD_MODEL_NAME`. A score above `GUARD_THRESHOLD` (default 0.7) produces a fixed refusal and ends the stream before creating a message record or routing.
+3. Create a pending message record. Pass the latest message and up to four history messages to the intent router, with message/conversation IDs for accounting. Jev returns an intent and confidence; confidence below 0.6 triggers the LLM fallback.
+4. Select the intent-specific system prompt and derive the follow-up and retrieval flags in application code. For policy follow-ups with history, rewrite the question using up to ten recent history messages.
+5. If retrieval is needed, embed the query and check the semantic cache. On a hit, emit the saved answer, record completion and latency, and finish the stream.
+6. On a cache miss, retrieve up to five policy chunks by cosine distance. Assemble the route-specific system prompt, retrieved context, conversation history, and latest question. Small talk and unsupported requests skip embedding, cache lookup, and retrieval.
+7. Stream the generated answer, periodically save its accumulated text, and record completion and latency. Provider usage is saved separately in `llm_calls`. Cache the answer when the request required retrieval and returned policy chunks.
 
-Small talk, unsupported requests, and blocked requests are intended to skip retrieval according to the router output. Blocked input is replaced with `Not Allowed` for downstream generation. Policy prompts instruct the model to use supplied context and acknowledge missing information.
+### Intent routing
 
-The router is an LLM-based application guardrail. Its schema validates the output shape; it does not guarantee correct classification or enforce consistency between every combination of routing fields.
+| Intent | Meaning | Retrieval |
+| --- | --- | --- |
+| `small_talk` | Greetings, thanks, acknowledgements, or questions about assistant capabilities | No |
+| `policy_question` | A standalone request to identify or explain a company policy | Yes |
+| `policy_followup` | A policy request that depends on a previous topic or answer | Yes; rewrite when history is available |
+| `unsupported` | Requests outside company policy assistance or actions the assistant cannot perform | No |
+
+Both router adapters return `(ChatIntents, confidence)`. Jev uses a typed `Choice` with the enum values as criteria keys; it returns decisions rather than generated text. The LLM fallback validates its response against `ChatRouter`, containing `route` and `confidence`. `RouterService` returns `(system_prompt, follow_up, needs_retrieval)` to the chat service.
+
+The confidence threshold is currently hard-coded in `services/router.py`. Fallback occurs for low confidence, not automatically for provider exceptions. There is no `blocked` intent: input guarding is a separate step. Classification can still be incorrect, including at high confidence. Policy answer prompts instruct the model to use supplied context and acknowledge missing information.
 
 ## Document ingestion and retrieval
 
@@ -109,14 +127,6 @@ The document corpus is shared across users. `created_by` records the uploader, b
 
 Authentication and rate-limit identity are separate: the limiter decodes a JWT to choose a counter key, while the authentication service also checks database revocation state.
 
-Current boundaries to account for when deploying:
-
-- `/file/retrieve` is a public routing diagnostic that calls the LLM and returns the routing tuple, including prompt text. It does not search documents.
-- `User.is_active` exists in the data model but is not checked by the authentication service.
-- The included browser client stores its bearer token in `localStorage`.
-- Uploads have no explicit total-size cap, malware scanning, or cleanup workflow for failed ingestion.
-- Guardrails and grounding instructions are model prompts, not a guarantee against prompt injection or incorrect answers.
-
 ## Rate limiting
 
 [`infrastructure/rate_limit.py`](infrastructure/rate_limit.py) configures SlowAPI with Redis storage, the `ratelimit` key prefix, and three default windows:
@@ -144,9 +154,19 @@ These are default route limits, not an explicitly configured application-wide qu
 | Shared namespace | Cache entries are not partitioned by user, conversation, document version, or model |
 | No explicit expiration or invalidation | No TTL is configured in this adapter, and document ingestion does not invalidate previous answers |
 
-Cache hits store zero token usage on the message record. Those zeros describe the skipped answer-generation call, not the total cost of the request. Routing, rewriting, title generation, and embedding usage are not included in message token totals.
+Cache hits create no final answer-generation call record. Guarding, routing, optional rewriting, query embedding, and new-conversation title generation can still incur costs and retain their own call records. Message records store content, lifecycle status, and latency rather than token/cost totals.
 
 Because generated answers may incorporate conversation history while cache lookup uses only the query vector, shared caching needs additional scoping before serving personalized or tenant-specific policy content. Corpus or model changes also need an invalidation strategy.
+
+## Usage and cost tracking
+
+`services/llm_calls.py` supplies `LLMCallService`, `TrackedLLM`, and `TrackedEmbedding`. `JavRouter` also records its TypeSafe calls through `LLMCallService`. Each `llm_calls` row stores call type, purpose, provider/model, available token counts and estimated costs, success status, error type, and optional message/conversation IDs.
+
+- Routing calls use purpose `intent_router`. Jev records use provider `typesafe` and the model ID returned by the API; they use the existing `generation` call type. A low-confidence Jev decision followed by the LLM fallback produces two call records.
+- Routing, rewriting, query embedding, and final answers carry both message and conversation IDs. Title generation and input guarding happen before message creation and carry the conversation ID. Document embedding calls can have neither ID.
+- Failures and cancellations are recorded; available usage is retained. Missing usage or costs stay `NULL` rather than being reported as zero. Call records retain the error type, not the upstream error message.
+- `config/llm_pricing.json` configures per-million-token input/output rates. The checked-in TypeSafe rate for `jev-1.13.0` is `$0.042` for input and `$0` for output. Decimal arithmetic is used for estimates; these records are not provider invoices. When changing a configured model, add its pricing entry too.
+- Migration `e62c91a740bd` moves historical message usage into `legacy_answer` call records and removes message-level token/cost columns. Run migrations before using the current code. Downgrading restores answer usage only; auxiliary call records cannot fit the old schema.
 
 ## Streaming, persistence, and recovery
 
@@ -157,13 +177,13 @@ Chat responses use **Server-Sent Events (SSE)** over HTTP POST with `text/event-
 | `token` | Answer text; a cache hit can send the complete answer in one event |
 | `conversation` | JSON containing `title` and `conversation_id` |
 | `done` | `[DONE]` |
-| `error` | `Provider failed` for failures caught within the generation block |
+| `error` | `Provider failed` for failures caught during routing, retrieval, or answer generation |
 
 The SSE formatter prefixes each line of multiline content with `data:`. Clients should parse named events and use a POST-capable streaming client, as the bundled browser UI does.
 
-Messages move through `PENDING`, `STREAMING`, `COMPLETED`, and `FAILED` states. Accumulated output is saved during streaming at the configured interval (`STREAM_UPDATE_SEC`, default **4 seconds**). Completion persists the answer and provider-reported token usage. Caught generation failures preserve accumulated text and mark the message failed.
+Messages move through `PENDING`, `STREAMING`, `COMPLETED`, `FAILED`, and `CANCELLED` states. Accumulated output is saved during streaming at the configured interval (`STREAM_UPDATE_SEC`, default **4 seconds**). Completion persists the answer, time to first token (`ttft`), and total time. Caught failures preserve accumulated text and mark the message failed; cancellation preserves partial content and marks an unfinished message cancelled. Provider usage is recorded separately in the call ledger.
 
-When messages are read, pending or streaming records older than `CUTOFF_SEC` (default **30 seconds**, based on `updated_at`) are marked failed. This is lazy stale-message reconciliation, not a background retry worker or resumable stream. The cutoff is not a provider request timeout. Routing, embedding, and retrieval failures occur before the stream's generation error handler.
+When messages are read, pending or streaming records older than `CUTOFF_SEC` (default **30 seconds**, based on `updated_at`) are marked failed. This is lazy stale-message reconciliation, not a background retry worker or resumable stream. The cutoff is not a provider request timeout. Routing, embedding, and retrieval are inside the stream's error handler; conversation setup and the input guard run before it.
 
 ## Data model and design decisions
 
@@ -172,6 +192,8 @@ erDiagram
     USER ||--o{ TOKEN : has
     USER ||--o{ CONVERSATION : owns
     CONVERSATION ||--o{ MESSAGE : contains
+    CONVERSATION |o--o{ LLM_CALL : tracks
+    MESSAGE |o--o{ LLM_CALL : tracks
     USER ||--o{ DOCUMENT : uploads
     DOCUMENT ||--o{ CHUNK : contains
 ```
@@ -202,13 +224,12 @@ erDiagram
 | GET | `/conversations/{conversation_id}/messages` | Read message history | Owner |
 | GET | `/conversations/{conversation_id}/title` | Retrieve a conversation title | Owner |
 | POST | `/file/upload` | Upload and index a PDF | Admin |
-| POST | `/file/retrieve` | Inspect intent routing | Public diagnostic |
 
 An unknown conversation ID passed to the chat stream creates a new conversation; access to another user's existing conversation is rejected. Interactive API documentation is available at `/docs` and `/redoc`.
 
 ## Local setup
 
-Use Python **3.12** to match the Docker image, PostgreSQL with the pgvector extension available, and Redis with the search/vector functionality required by RedisVL. Groq and Gemini credentials are required for live chat and ingestion.
+Use Python **3.12** to match the Docker image, PostgreSQL with the pgvector extension available, and Redis with the search/vector functionality required by RedisVL. The default setup requires Groq, TypeSafe, and Gemini credentials for live chat and ingestion.
 
 From the repository root:
 
@@ -219,7 +240,7 @@ python -m venv .venv
 python -m pip install -r requirements.txt
 ```
 
-Create a root `.env` using this template. Replace placeholders with local credentials and model identifiers supported by your provider accounts. The Groq model must support the JSON-schema requests used for routing, rewriting, and titles.
+Create a root `.env` using this template. Replace credential placeholders and select models supported by your provider accounts. The generation and fallback models must support the JSON-schema requests used for routing, rewriting, and titles. The guard model must return a numeric score. Model identifiers below match the checked-in pricing catalog.
 
 ```dotenv
 POSTGRES_USER=fastapi
@@ -234,11 +255,19 @@ PASSWORD_SECRET=replace-with-a-long-random-signing-secret
 PASSWORD_ALGORITHM=HS256
 
 MODEL_PROVIDER=groq
-MODEL_NAME=replace-with-a-compatible-groq-model
+MODEL_NAME=openai/gpt-oss-120b
+SMALL_MODEL_NAME=openai/gpt-oss-20b
+GUARD_MODEL_NAME=meta-llama/llama-prompt-guard-2-22m
+GUARD_THRESHOLD=0.7
 GROQ_KEY=replace-with-your-groq-key
 
+ROUTER_PROVIDER=jav
+ROUTER_PROVIDER_FALLBACK=llm
+TYPESAFE_API_KEY=replace-with-your-typesafe-key
+TYPESAFE_MODEL=jev-1.13.0
+
 EMBEDDING_PROVIDER=gemini
-EMBEDDING_MODEL=replace-with-a-compatible-gemini-embedding-model
+EMBEDDING_MODEL=gemini-embedding-2
 GEMINI_API_KEY=replace-with-your-gemini-key
 EMBEDDING_VECTOR_SIZE=768
 
@@ -283,17 +312,6 @@ docker compose -f docker/docker-compose.yml up -d --build fastapi
 ```
 
 This explicit sequence matters because the API service does not depend on successful completion of the migration service. The supplied Compose file publishes database and Redis ports to the host and should be reviewed before deployment beyond local development.
-
-## Tests and evaluation
-
-```sh
-python -m pytest
-locust -f tests/locustfile.py --host http://localhost:8000
-```
-
-The test suite includes authentication service behavior, message lifecycle transitions, chunk splitting, retrieval and follow-up rewriting, and API journeys with overridden service dependencies. These API tests use fakes; they do not establish live PostgreSQL, Redis, provider, or full RAG integration coverage. Settings must still be available when application dependencies are imported, and the API tests retain the application's rate-limit middleware, which can require Redis.
-
-The Locust scenario logs in with two predefined development accounts and repeatedly lists conversations. Provision matching test accounts or update the scenario's credentials before running it. It does not exercise streaming generation or ingestion. Rate limits apply to live requests and must be considered when interpreting failures or throughput. No benchmark results are claimed here.
 
 ## Operational scope
 
